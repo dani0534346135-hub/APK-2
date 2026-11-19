@@ -4,6 +4,8 @@ import android.Manifest
 import android.annotation.SuppressLint
 import android.app.NotificationManager
 import android.app.admin.DevicePolicyManager
+import android.bluetooth.BluetoothAdapter
+import android.bluetooth.BluetoothManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
@@ -109,6 +111,16 @@ object CommandExecutor {
                 setRingerNormal(context)
                 replyCallback("🔔 מצב השמע הועבר לצלצול רגיל בעוצמה גבוהה.")
             }
+            ActionType.VOLUME_UP -> {
+                val steps = suffixPayload.toIntOrNull() ?: rule.extraText.trim().toIntOrNull() ?: 1
+                val summary = adjustVolume(context, increase = true, steps = steps)
+                replyCallback(summary)
+            }
+            ActionType.VOLUME_DOWN -> {
+                val steps = suffixPayload.toIntOrNull() ?: rule.extraText.trim().toIntOrNull() ?: 1
+                val summary = adjustVolume(context, increase = false, steps = steps)
+                replyCallback(summary)
+            }
             ActionType.DND_ON -> {
                 val ok = setDndState(context, enable = true)
                 replyCallback(
@@ -124,7 +136,7 @@ object CommandExecutor {
                 )
             }
             ActionType.SPEAK_TEXT -> {
-                val textToSpeak = suffixPayload.ifEmpty { rule.extraText.trim() }
+                val textToSpeak = rule.extraText.trim().ifEmpty { suffixPayload }
                 if (textToSpeak.isNotEmpty()) {
                     speakLoud(context, textToSpeak)
                     replyCallback("🗣️ ההודעה הוקראה בקול רם.")
@@ -158,6 +170,34 @@ object CommandExecutor {
             ActionType.GPS_OFF -> {
                 setGpsState(context, false)
                 replyCallback("📴 ה-GPS כובה.")
+            }
+            ActionType.WIFI_ON -> {
+                val ok = setWifiState(context, true)
+                replyCallback(
+                    if (ok) "📶 ה-Wi-Fi הופעל."
+                    else "⚠️ הפעלת Wi-Fi נכשלה (ודא שהרשאות Wi-Fi / ADB מאושרות)."
+                )
+            }
+            ActionType.WIFI_OFF -> {
+                val ok = setWifiState(context, false)
+                replyCallback(
+                    if (ok) "📴 ה-Wi-Fi כובה."
+                    else "⚠️ כיבוי Wi-Fi נכשל (ודא שהרשאות Wi-Fi / ADB מאושרות)."
+                )
+            }
+            ActionType.BLUETOOTH_ON -> {
+                val ok = setBluetoothState(context, true)
+                replyCallback(
+                    if (ok) "🔵 ה-Bluetooth הופעל."
+                    else "⚠️ הפעלת Bluetooth נכשלה (ודא שהרשאות בלוטות' / ADB מאושרות)."
+                )
+            }
+            ActionType.BLUETOOTH_OFF -> {
+                val ok = setBluetoothState(context, false)
+                replyCallback(
+                    if (ok) "⚪ ה-Bluetooth כובה."
+                    else "⚠️ כיבוי Bluetooth נכשל (ודא שהרשאות בלוטות' / ADB מאושרות)."
+                )
             }
             ActionType.DATA_ON -> {
                 val ok = setMobileDataState(context, true)
@@ -209,6 +249,78 @@ object CommandExecutor {
             ActionType.CUSTOM_REPLY -> {
                 val txt = rule.extraText.ifEmpty { "✅ הפקודה בוצעה בהצלחה." }
                 replyCallback(txt)
+            }
+        }
+    }
+
+    private fun adjustVolume(context: Context, increase: Boolean, steps: Int): String {
+        return try {
+            val am = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            val count = steps.coerceIn(1, 15)
+            val streams = listOf(AudioManager.STREAM_RING, AudioManager.STREAM_MUSIC, AudioManager.STREAM_NOTIFICATION)
+
+            if (increase && am.ringerMode == AudioManager.RINGER_MODE_SILENT) {
+                am.ringerMode = AudioManager.RINGER_MODE_NORMAL
+            }
+
+            repeat(count) {
+                for (stream in streams) {
+                    val direction = if (increase) AudioManager.ADJUST_RAISE else AudioManager.ADJUST_LOWER
+                    am.adjustStreamVolume(stream, direction, 0)
+                }
+            }
+
+            val currentRing = am.getStreamVolume(AudioManager.STREAM_RING)
+            val maxRing = am.getStreamMaxVolume(AudioManager.STREAM_RING).coerceAtLeast(1)
+            val pctRing = (currentRing * 100) / maxRing
+
+            val currentMedia = am.getStreamVolume(AudioManager.STREAM_MUSIC)
+            val maxMedia = am.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1)
+            val pctMedia = (currentMedia * 100) / maxMedia
+
+            val label = if (increase) "🔊 הווליום הוגבר" else "🔉 הווליום הונמך"
+            "$label ($count צעדים)\n🔔 צלצול: $pctRing% | 🎵 מדיה: $pctMedia%"
+        } catch (_: Exception) {
+            "⚠️ לא ניתן לשנות את עוצמת הווליום."
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun setWifiState(context: Context, enable: Boolean): Boolean {
+        return try {
+            val wm = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+            wm.isWifiEnabled = enable
+            true
+        } catch (_: Exception) {
+            try {
+                Settings.Global.putInt(context.contentResolver, "wifi_on", if (enable) 1 else 0)
+                true
+            } catch (_: Exception) {
+                false
+            }
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun setBluetoothState(context: Context, enable: Boolean): Boolean {
+        return try {
+            val adapter: BluetoothAdapter? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                val bm = context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
+                bm.adapter
+            } else {
+                BluetoothAdapter.getDefaultAdapter()
+            }
+            if (adapter != null) {
+                if (enable) adapter.enable() else adapter.disable()
+                return true
+            }
+            false
+        } catch (_: Exception) {
+            try {
+                Settings.Global.putInt(context.contentResolver, "bluetooth_on", if (enable) 1 else 0)
+                true
+            } catch (_: Exception) {
+                false
             }
         }
     }
