@@ -10,6 +10,8 @@ enum class ActionType(val displayName: String) {
     FLASHLIGHT_ON("הדלק פנס (LED)"),
     FLASHLIGHT_OFF("כבה פנס (LED)"),
     RINGER_NORMAL("העבר מצב שמע לצלצול רגיל"),
+    VOLUME_UP("הגבר ווליום"),
+    VOLUME_DOWN("הנמך ווליום"),
     DND_ON("הפעל מצב נא לא להפריע"),
     DND_OFF("כבה מצב נא לא להפריע"),
     SPEAK_TEXT("הקרא טקסט בקול רם (TTS)"),
